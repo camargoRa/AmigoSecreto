@@ -18,7 +18,7 @@ const PARTICIPANTES = [
 
 // Para hacer un sorteo nuevo, sube este número (2, 3, 4...) y vuelve a publicar.
 // El sorteo nuevo evita repetir las parejas del sorteo anterior.
-const SORTEO_ID = 2;
+const SORTEO_ID = 3;
 
 // true = en un sorteo nuevo nadie recibe a la misma persona del sorteo anterior
 const EVITAR_REPETIDOS = true;
