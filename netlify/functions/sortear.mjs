@@ -16,8 +16,12 @@ const PARTICIPANTES = [
   "Marian",
 ];
 
-// Para empezar un sorteo nuevo desde cero, cambia este número.
-const SORTEO_ID = 1;
+// Para hacer un sorteo nuevo, sube este número (2, 3, 4...) y vuelve a publicar.
+// El sorteo nuevo evita repetir las parejas del sorteo anterior.
+const SORTEO_ID = 2;
+
+// true = en un sorteo nuevo nadie recibe a la misma persona del sorteo anterior
+const EVITAR_REPETIDOS = true;
 // =====================================================
 
 export const config = { path: "/api/sortear" };
@@ -36,27 +40,29 @@ const respuesta = (obj, status = 200) =>
   });
 
 /**
- * Opciones válidas para "quien":
- * - no puede sacarse a sí mismo
- * - no puede sacar a alguien ya escogido
- * - no puede dejar a la última persona con solo ella misma como opción
+ * Genera el sorteo completo de una vez (quién le da a quién):
+ * - nadie se saca a sí mismo
+ * - nadie sale repetido
+ * - nadie recibe a la misma persona del sorteo anterior
  */
-function opcionesValidas(quien, asignaciones) {
-  const escogidos = new Set(Object.values(asignaciones));
-  const pendientes = PARTICIPANTES.filter(p => !(p in asignaciones));
-  const disponibles = PARTICIPANTES.filter(p => !escogidos.has(p));
-  const quedanDar = pendientes.filter(p => p !== quien);
+function generarSorteo(previo) {
+  for (let intento = 0; intento < 10000; intento++) {
+    const receptores = [...PARTICIPANTES];
 
-  return disponibles
-    .filter(p => p !== quien)
-    .filter(candidato => {
-      const quedanRecibir = disponibles.filter(p => p !== candidato);
-      const atrapado =
-        quedanDar.length === 1 &&
-        quedanRecibir.length === 1 &&
-        quedanDar[0] === quedanRecibir[0];
-      return !atrapado;
-    });
+    // Mezcla aleatoria (Fisher-Yates)
+    for (let i = receptores.length - 1; i > 0; i--) {
+      const j = Math.floor(Math.random() * (i + 1));
+      [receptores[i], receptores[j]] = [receptores[j], receptores[i]];
+    }
+
+    const valido = PARTICIPANTES.every(
+      (dador, i) => receptores[i] !== dador && previo[dador] !== receptores[i]
+    );
+    if (valido) {
+      return Object.fromEntries(PARTICIPANTES.map((dador, i) => [dador, receptores[i]]));
+    }
+  }
+  return null;
 }
 
 export default async (req) => {
@@ -83,31 +89,24 @@ export default async (req) => {
   const store = getStore({ name: "amigo-secreto", consistency: "strong" });
   const key = `sorteo-${SORTEO_ID}`;
 
-  // Varias personas pueden girar a la vez: se reintenta si alguien guardó primero
-  for (let intento = 0; intento < 8; intento++) {
-    const actual = await store.getWithMetadata(key, { type: "json" });
-    const asignaciones = actual?.data ?? {};
+  let sorteo = await store.get(key, { type: "json" });
 
-    // Ya había girado: se le muestra el mismo resultado
-    if (quien in asignaciones) {
-      return respuesta({ amigo: asignaciones[quien] });
+  // El sorteo se crea una sola vez, cuando alguien gira por primera vez
+  if (!sorteo) {
+    let previo = {};
+    if (EVITAR_REPETIDOS && SORTEO_ID > 1) {
+      previo = (await store.get(`sorteo-${SORTEO_ID - 1}`, { type: "json" })) ?? {};
     }
 
-    const opciones = opcionesValidas(quien, asignaciones);
-    if (opciones.length === 0) {
-      return respuesta({ error: "No hay opciones disponibles." }, 409);
+    const nuevo = generarSorteo(previo);
+    if (!nuevo) {
+      return respuesta({ error: "No se pudo generar el sorteo." }, 500);
     }
-    const elegido = opciones[Math.floor(Math.random() * opciones.length)];
-    const nuevas = { ...asignaciones, [quien]: elegido };
 
-    const resultado = actual
-      ? await store.set(key, JSON.stringify(nuevas), { onlyIfMatch: actual.etag })
-      : await store.set(key, JSON.stringify(nuevas), { onlyIfNew: true });
-
-    if (resultado.modified) {
-      return respuesta({ amigo: elegido });
-    }
+    // Si dos personas giran a la vez, gana la primera y la otra usa ese mismo sorteo
+    const guardado = await store.set(key, JSON.stringify(nuevo), { onlyIfNew: true });
+    sorteo = guardado.modified ? nuevo : await store.get(key, { type: "json" });
   }
 
-  return respuesta({ error: "Mucha gente a la vez. Intenta de nuevo." }, 503);
+  return respuesta({ amigo: sorteo[quien] });
 };
