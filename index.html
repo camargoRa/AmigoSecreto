@@ -1,0 +1,203 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Amigo Secreto</title>
+  <style>
+    :root {
+      --fondo: #f4f1fa;
+      --texto: #2b2540;
+      --primario: #6c4ce0;
+      --primario-oscuro: #5638c4;
+      --peligro: #d64550;
+    }
+
+    * { box-sizing: border-box; }
+
+    body {
+      margin: 0;
+      min-height: 100vh;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+      background: var(--fondo);
+      color: var(--texto);
+    }
+
+    .contenedor {
+      width: 100%;
+      max-width: 420px;
+      padding: 24px 16px;
+      text-align: center;
+    }
+
+    h1 { margin: 0 0 20px; }
+
+    /* ---------- Ruleta ---------- */
+    .ruleta-caja {
+      position: relative;
+      width: min(72vw, 300px);
+      aspect-ratio: 1;
+      margin: 0 auto 24px;
+    }
+
+    .ruleta {
+      width: 100%;
+      height: 100%;
+      border-radius: 50%;
+      border: 6px solid #fff;
+      box-shadow: 0 6px 20px rgba(40, 20, 90, 0.25);
+      transition: transform 5s cubic-bezier(0.17, 0.67, 0.12, 1);
+    }
+
+    .centro {
+      position: absolute;
+      top: 50%;
+      left: 50%;
+      width: 56px;
+      height: 56px;
+      transform: translate(-50%, -50%);
+      border-radius: 50%;
+      background: #fff;
+      box-shadow: 0 2px 8px rgba(0, 0, 0, 0.2);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 1.6rem;
+    }
+
+    .flecha {
+      position: absolute;
+      top: -10px;
+      left: 50%;
+      transform: translateX(-50%);
+      width: 0;
+      height: 0;
+      border-left: 14px solid transparent;
+      border-right: 14px solid transparent;
+      border-top: 26px solid var(--texto);
+      z-index: 2;
+      filter: drop-shadow(0 2px 2px rgba(0, 0, 0, 0.3));
+    }
+
+    /* ---------- Controles ---------- */
+    button {
+      width: 100%;
+      padding: 12px 16px;
+      border: none;
+      border-radius: 10px;
+      background: var(--primario);
+      color: #fff;
+      font-size: 1.05rem;
+      cursor: pointer;
+    }
+
+    button:hover { background: var(--primario-oscuro); }
+    button:disabled { opacity: 0.5; cursor: not-allowed; }
+
+    .mensaje { min-height: 1.3em; margin: 12px 0 0; font-size: 0.95rem; color: var(--peligro); }
+
+    /* ---------- Resultado ---------- */
+    .resultado {
+      padding: 18px;
+      border-radius: 14px;
+      background: #efe9ff;
+    }
+    .resultado .pre { margin: 0 0 6px; font-size: 1rem; }
+    .resultado .nombre { margin: 0 0 12px; font-size: 2rem; font-weight: 700; color: var(--primario); }
+    .resultado .nota { margin: 0; font-size: 0.85rem; opacity: 0.7; }
+
+    .oculto { display: none; }
+  </style>
+</head>
+<body>
+  <main class="contenedor">
+    <h1>🎁 Amigo Secreto</h1>
+
+    <div class="ruleta-caja">
+      <div class="flecha"></div>
+      <div class="ruleta" id="ruleta"></div>
+      <div class="centro">🎁</div>
+    </div>
+
+    <div id="formulario">
+      <button id="btn-girar">Girar la ruleta</button>
+      <p id="mensaje" class="mensaje"></p>
+    </div>
+
+    <div id="resultado" class="resultado oculto">
+      <p class="pre">Tu amigo secreto es</p>
+      <p class="nombre" id="resultado-nombre"></p>
+      <p class="nota">Si vuelves a abrir tu enlace, te saldrá el mismo nombre.</p>
+    </div>
+  </main>
+
+  <script>
+    // El nombre de quien gira viene del enlace personal: ...?nombre=Ana
+    const nombre = new URLSearchParams(location.search).get("nombre");
+
+    const $ = id => document.getElementById(id);
+    const ruleta = $("ruleta");
+    const btnGirar = $("btn-girar");
+    const mensaje = $("mensaje");
+
+    // ---------- Ruleta (solo decorativa: sin nombres) ----------
+    const COLORES = ["#6c4ce0", "#f5a623", "#2e9e6a", "#d64550", "#3a9ad9", "#e05aa0"];
+    const SECTORES = 12;
+    const grados = 360 / SECTORES;
+    ruleta.style.background =
+      "conic-gradient(" +
+      Array.from({ length: SECTORES }, (_, i) =>
+        `${COLORES[i % COLORES.length]} ${i * grados}deg ${(i + 1) * grados}deg`
+      ).join(", ") +
+      ")";
+
+    let rotacion = 0;
+
+    function animarRuleta() {
+      return new Promise(resolver => {
+        rotacion += 360 * 5 + Math.floor(Math.random() * 360);
+        ruleta.addEventListener("transitionend", resolver, { once: true });
+        ruleta.style.transform = `rotate(${rotacion}deg)`;
+      });
+    }
+
+    function pedirAmigo() {
+      return fetch("/api/sortear", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ nombre }),
+      })
+        .then(async r => ({ ok: r.ok, data: await r.json() }))
+        .catch(() => ({ ok: false, data: { error: "No se pudo conectar. Intenta de nuevo." } }));
+    }
+
+    // ---------- Acción ----------
+    async function girar() {
+      mensaje.textContent = "";
+      btnGirar.disabled = true;
+
+      // La ruleta gira mientras el servidor decide; se muestra al terminar ambas cosas
+      const [resp] = await Promise.all([pedirAmigo(), animarRuleta()]);
+
+      if (resp.ok) {
+        $("formulario").classList.add("oculto");
+        $("resultado-nombre").textContent = resp.data.amigo;
+        $("resultado").classList.remove("oculto");
+      } else {
+        mensaje.textContent = resp.data.error || "Ocurrió un error.";
+        btnGirar.disabled = false;
+      }
+    }
+
+    if (!nombre) {
+      mensaje.textContent = "Abre el enlace personal que te enviaron.";
+      btnGirar.disabled = true;
+    }
+
+    btnGirar.addEventListener("click", girar);
+  </script>
+</body>
+</html>
